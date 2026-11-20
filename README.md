@@ -1,521 +1,384 @@
-<div align="center">
+# SmartDesk - Semantic IT & Facilities Helpdesk
 
-# SmartDesk
-### Semantic IT & Facilities Helpdesk
+SmartDesk is a helpdesk for IT and facilities problems ("Wi-Fi not working", "AC not cooling", "laptop battery draining fast") that understands what a ticket **means**, not just which words it contains. When someone reports a problem it finds similar problems that were solved before, suggests the fix, sends the ticket to the right team, assigns the least-loaded technician, and tracks the deadline (SLA).
 
-**A centralized, context-aware helpdesk for reporting, routing, tracking, and resolving workplace IT and facilities issues.**
+Built for **DBMS Experiential Learning, Level 3** (PES University) by a team of two. Database option: **SQL + vector database** (PostgreSQL with pgvector).
 
-[![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![pgvector](https://img.shields.io/badge/pgvector-vector%20search-336791)](https://github.com/pgvector/pgvector)
-[![License](https://img.shields.io/badge/License-Not%20specified-lightgrey)](#license)
-
-[Overview](#-overview) · [Problem](#-problem-statement) · [Features](#-key-capabilities) · [Architecture](#-system-architecture) · [Setup](#-getting-started) · [Database](#-database-setup) · [Run](#-run-the-application) · [Troubleshooting](#-troubleshooting)
-
-</div>
+| | |
+|---|---|
+| Frontend | Next.js 14 (React), simple white and orange dashboard |
+| Backend | Next.js route handlers (Node.js) |
+| Database | PostgreSQL 14+ with **pgvector** (relational data and vector search in one database) |
+| Embeddings | Pre-trained `all-MiniLM-L6-v2`, run locally (nothing is trained) |
+| LLM | **Gemini API** writes plain-language explanations from the retrieved past fixes (RAG) |
 
 ---
 
-## 📌 Overview
+## Contents
 
-SmartDesk is a semantic IT and facilities helpdesk concept built to make internal issue management more organized and knowledge-driven. Employees can report workplace problems, while support teams can review, prioritize, assign, and resolve tickets through a centralized workflow.
+1. [The problem and the idea](#1-the-problem-and-the-idea)
+2. [Features](#2-features)
+3. [How it works](#3-how-it-works)
+4. [Technology stack](#4-technology-stack)
+5. [Project structure](#5-project-structure)
+6. [Getting started](#6-getting-started)
+7. [Configuration](#7-configuration)
+8. [Using the app](#8-using-the-app)
+9. [Gemini (LLM) setup](#9-gemini-llm-setup)
+10. [Database design](#10-database-design)
+11. [API reference](#11-api-reference)
+12. [Testing and results](#12-testing-and-results)
+13. [Security](#13-security)
+14. [Team and contributions](#14-team-and-contributions)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Limitations and future work](#16-limitations-and-future-work)
+17. [Course requirements checklist](#17-course-requirements-checklist)
 
-Unlike a basic keyword-only ticket list, the project is designed to use **semantic similarity** to find previously resolved issues that are phrased differently but describe a similar problem. This can help surface relevant fixes and reduce repeated troubleshooting.
+---
 
-The repository identifies the project as a DBMS experiential-learning project and lists Next.js, PostgreSQL, and pgvector as its core technologies.
+## 1. The problem and the idea
 
-> **Repository status note:** This README documents the intended system and the setup indicated by the repository. The public repository currently exposes a small initial codebase. Verify that the referenced SQL files and embedding script are present in your local checkout before following those steps. Features described as capabilities below should not be interpreted as proof that every screen or workflow is already complete.
+Organisations receive many IT and facilities tickets every day. Typical helpdesk tools only store them. They match exact words, rely on people to categorise and assign every ticket, and do not remember how similar problems were fixed before. The result: duplicate tickets, slow routing, lost knowledge, uneven workload and missed deadlines.
 
-## 🎯 Problem Statement
+**SmartDesk's idea:** turn each ticket description into a list of numbers (an *embedding*) in which similar meanings are close together, compare it with tickets that were already solved, and decide what to do from how close the best match is. PostgreSQL handles assignment, deadlines and audit automatically through triggers and stored procedures. A language model (Gemini) then explains the suggested fix in readable words, using only the retrieved tickets.
 
-Organizations often receive IT and facilities complaints through emails, phone calls, chat messages, or informal conversations. When these requests are handled separately, support teams can struggle to maintain a reliable record of issues and their resolutions.
+| Problem | How SmartDesk addresses it |
+|---|---|
+| Duplicate tickets | Counts similar open tickets from the last 48 hours ("possible known outage") |
+| Slow routing | Meaning-based search picks the department; unclear tickets go to a triage queue |
+| Lost knowledge | Suggests the verified fix of the most similar solved ticket |
+| Uneven workload | Stored procedure assigns the least-loaded technician, with a lock against races |
+| Missed deadlines | Trigger sets the SLA deadline; a scheduled scan raises alerts |
+| No insight | Dashboards built on database views |
 
-### Existing pain points
+## 2. Features
 
-- **Scattered requests:** Employees use different channels to report problems.
-- **Repeated troubleshooting:** Similar incidents are investigated from scratch because previous fixes are difficult to discover.
-- **Manual assignment:** Tickets may be sent to the wrong team or technician.
-- **Uneven workload:** Managers may not have a clear view of technician assignments.
-- **SLA visibility:** Deadlines and overdue requests can be difficult to monitor consistently.
-- **Knowledge loss:** Useful resolutions may remain buried in old tickets instead of becoming reusable support knowledge.
+**Employee**: sign in; report a problem in plain English; see a suggested fix and an AI explanation; press "This solved it" or "Still need help"; view, filter and search own tickets; see the status timeline; reopen a resolved ticket; withdraw (delete) a ticket that is still Open.
 
-### Proposed solution
+**Technician**: queue sorted by nearest SLA deadline; start work; resolve with a written resolution (which becomes searchable for future tickets); see department tickets and own workload.
 
-SmartDesk aims to provide one place to:
+**Admin**: dashboard (totals, overdue, unassigned, average resolution time, tickets by status and priority); triage and unassigned queues; reassign department or technician; escalate priority; SLA alerts and a manual SLA scan; technician workload; department summary; AI performance (decisions, deflection rate, routing accuracy); recurring issues; user management (create, deactivate).
 
-1. Submit and track IT or facilities tickets.
-2. Search historical tickets using semantic similarity.
-3. Surface relevant previously resolved incidents and verified fixes.
-4. Route or triage new tickets for the appropriate support team.
-5. Assign work with technician workload in mind.
-6. Track status, ownership, history, and service deadlines.
-7. Give administrators an operational view of support activity.
+**Automatic (inside the database)**: SLA deadline on every new ticket; audit trail of every status change with *who* changed it; SLA breach alerts; log of withdrawn tickets; race-free technician assignment; validation of every row.
 
-### Project objectives
+**One search, three outcomes**
 
-- Centralize issue reporting and resolution records.
-- Make historical support knowledge easier to reuse.
-- Demonstrate vector similarity search using PostgreSQL and pgvector.
-- Apply database concepts such as relational modelling, constraints, indexes, triggers, procedures, and views where implemented.
-- Keep the workflow understandable for employees, technicians, and administrators.
-
-## ✨ Key Capabilities
-
-The following table describes the intended product capabilities. Confirm each one against the current application before presenting it as completed.
-
-| Area | Capability | Purpose |
+| Best similarity | Mode | Result |
 |---|---|---|
-| Employee | Ticket submission | Record an issue with its description and relevant details |
-| Employee | Ticket history and status | Follow progress and see ownership |
-| Knowledge search | Similar-ticket suggestions | Find older incidents with similar meaning |
-| Technician | Assigned-ticket queue | Review and work on allocated requests |
-| Technician | Resolution notes | Record the steps taken to fix an issue |
-| Admin | Ticket triage | Review, prioritize, and route incoming work |
-| Admin | Assignment management | Allocate or reassign tickets |
-| Admin | SLA and workload monitoring | Identify overdue work and uneven workloads |
-| AI assistance | Resolution explanation | Present a clearer explanation of a suggested fix, where configured |
+| high | **suggest** | shows the past fix with source ticket and score, routes to its department |
+| medium | **route** | no fix shown; routed by a similarity-weighted vote of the nearest tickets |
+| low, split vote, or AI failure | **triage** | goes to an Admin |
 
-### Typical user journey
+If the embedding step, the search or Gemini fails, the ticket is still saved. The AI layer never blocks ticket creation.
 
-```mermaid
-flowchart TD
-    A[Employee reports an issue] --> B[Ticket is stored]
-    B --> C[Generate or retrieve text embedding]
-    C --> D[Search similar historical tickets]
-    D --> E{Useful verified match found?}
-    E -- Yes --> F[Show related ticket and suggested fix]
-    E -- No --> G[Continue with normal triage]
-    F --> G
-    G --> H[Route and assign ticket]
-    H --> I[Technician investigates]
-    I --> J[Resolution is recorded]
-    J --> K[Ticket is closed or verified]
-    K --> L[Resolution becomes searchable knowledge]
-```
+## 3. How it works
 
-*This is the intended workflow. Exact automation and transition rules depend on the implementation in the repository.*
+1. The employee describes the problem. The server checks the login cookie, the role and the input.
+2. The local MiniLM model converts the text into 384 numbers.
+3. pgvector returns the 5 most similar **verified, resolved** tickets (cosine similarity).
+4. `lib/decide.js` chooses suggest, route or triage from the scores.
+5. One database transaction saves the ticket (a trigger sets the deadline and writes the audit row), records the decision, and calls `assign_technician` inside a savepoint.
+6. For suggest mode, the browser asks `/api/tickets/:id/explanation`. The server sends the new ticket and the top retrieved tickets (personal data removed) to Gemini, accepts the answer only if it cites tickets that were supplied, and caches it. If anything fails, the raw past fix is shown.
+7. A technician's resolution marks the ticket *verified*, so it becomes searchable. Reopening a ticket clears that flag, so a wrong fix stops being suggested.
 
-## 🧠 Semantic Search: How It Works
+Diagrams (architecture and sequence) are in [`docs/architecture.md`](docs/architecture.md); the ER diagram is [`docs/ER_diagram.png`](docs/ER_diagram.png).
 
-Traditional keyword search looks for matching words. Semantic search attempts to identify similarity in meaning.
+## 4. Technology stack
 
-For example:
-
-- Previous ticket: “Laptop cannot connect to the office wireless network.”
-- New ticket: “My computer is not joining the company Wi-Fi.”
-
-The wording is different, but the underlying issue may be similar.
-
-### Embedding and retrieval pipeline
-
-1. **Input text:** Take the issue title and/or description.
-2. **Embedding:** Convert the text into a numeric vector using the configured sentence-embedding model. The project plan references a MiniLM model with 384-dimensional embeddings.
-3. **Storage:** Store the vector alongside the relevant ticket in PostgreSQL using pgvector.
-4. **Similarity search:** Compare the new vector with stored ticket vectors.
-5. **Results:** Return the most relevant historical tickets for review.
-6. **Resolution assistance:** Where configured, an AI explanation service can explain a retrieved fix in simpler language.
-
-```mermaid
-flowchart LR
-    A[New ticket text] --> B[Embedding model]
-    B --> C[384-dimensional vector]
-    C --> D[(PostgreSQL + pgvector)]
-    D --> E[Similarity ranking]
-    E --> F[Related historical tickets]
-    F --> G[Technician reviews suggested fix]
-```
-
-**Important:** Similarity is a recommendation signal, not proof that two incidents have the same cause. A technician should validate a suggested resolution before applying it.
-
-## 🏗️ System Architecture
-
-SmartDesk is organized around a Next.js application and a PostgreSQL database with vector-search support.
-
-```mermaid
-flowchart TB
-    U[Employee / Technician / Admin] --> UI[Next.js UI]
-    UI --> API[Next.js API routes / server logic]
-    API --> AUTH[Authentication and authorization]
-    API --> DB[(PostgreSQL)]
-    API --> EMB[Embedding service]
-    EMB --> VEC[pgvector similarity search]
-    VEC --> DB
-    API --> AI[Optional Gemini explanation service]
-    DB --> API
-    API --> UI
-```
-
-### Technology stack
-
-| Layer | Technology | Role |
+| Layer | Technology | Why |
 |---|---|---|
-| Web application | Next.js 14 | Application framework and server-side routes |
-| UI | React 18 | Component-based interface |
-| Database | PostgreSQL 14+ | Persistent relational data |
-| Vector search | pgvector | Store and compare embedding vectors |
-| Database driver | `pg` | Connect the Node.js application to PostgreSQL |
-| Embeddings | `@xenova/transformers` | Run text embedding models in the JavaScript environment |
-| Authentication configuration | JWT secret | Secret used by authentication-related code, if implemented |
-| AI explanations | Gemini (planned/configuration-dependent) | Explain retrieved resolutions, not determine routing by itself |
+| Frontend | Next.js 14, React, plain CSS | Required by the course; one framework for pages and API |
+| Backend | Next.js route handlers | No second server to run |
+| Database | PostgreSQL 14+ | Integrity, joins, triggers, procedures, views |
+| Vector search | pgvector (HNSW index, cosine) | Same database and same transaction as the ticket |
+| Embeddings | `@xenova/transformers` with `Xenova/all-MiniLM-L6-v2` | Pre-trained, local, free, no ticket text leaves the machine |
+| LLM | Gemini API through `@google/genai` | Readable explanations; used only after retrieval, never for routing |
+| Driver | `pg` (parameterized SQL) | Prevents SQL injection |
+| Security | `bcryptjs`, `jsonwebtoken`, `zod` | Password hashes, signed cookie, input validation |
+| Tests | Node's built-in test runner plus check scripts | No extra framework |
 
-## 🧰 Getting Started
+Deliberately not used: Kubernetes, microservices, message queues, model training, a second vector database.
+
+## 5. Project structure
+
+```
+SMARTDESK/
+├── app/                         Next.js pages and API routes
+│   ├── login/ tickets/ technician/ admin/     pages (client components)
+│   ├── api/auth/ api/tickets/ api/admin/ api/me api/meta   route handlers
+│   ├── layout.js  globals.css                 shared layout and the white/orange theme
+├── components/                  NavBar, TicketTable, SuggestionCard, StatusTimeline, ui helpers, api wrapper
+├── lib/                         business logic (also imported by scripts and tests, so relative imports)
+│   ├── db.js auth.js errors.js validate.js rateLimit.js
+│   ├── embeddings.js hashEmbedding.js similarity.js decide.js explain.js
+│   └── ticketService.js adminService.js
+├── db/
+│   ├── schema.sql triggers.sql routines.sql views.sql indexes.sql roles.sql
+│   ├── seed.sql (generated)  seed-source/tickets.csv  eval/eval_set.csv
+├── scripts/                     reset-db, embed, run-eval, check-db, check-api, check-concurrency, perf-index, generators
+├── tests/                       unit tests (decision logic, Gemini helper, fallback embedding)
+├── docs/                        ER diagram, data dictionary, architecture, queries, results, screenshots
+├── instrumentation.js           warms up the embedding model when the server starts
+├── compose.yaml                  local PostgreSQL + pgvector service
+├── scripts/setup.ps1             Windows PowerShell setup helper
+├── next.config.mjs  jsconfig.json  package.json  .env.example
+```
+
+## 6. Getting started
+
+SmartDesk uses **one Next.js server** for both the web interface and API routes. You do not need to start a separate API server.
 
 ### Prerequisites
 
-Install the following before starting:
+- Node.js **20.6+** (Node.js 22 LTS recommended) and npm.
+- Docker Desktop running, or PostgreSQL 14+ with the `pgvector` extension installed locally.
+- Internet access on the first run if you want the real MiniLM embedding model. Gemini is optional.
 
-| Requirement | Recommended version | Why it is needed |
-|---|---:|---|
-| Node.js | 20 LTS or newer | Run the Next.js application and scripts |
-| npm | Bundled with Node.js | Install project dependencies |
-| PostgreSQL | 14 or newer | Store application data |
-| pgvector | Version compatible with PostgreSQL | Enable vector storage and similarity search |
-| Git | Recent version | Clone the repository |
-| Code editor | VS Code or equivalent | Edit configuration and source files |
+### Windows 10/11 (PowerShell) — recommended
 
-Check your installations:
+1. Extract the ZIP and open PowerShell in the `SMARTDESK` project folder (the folder containing `package.json`).
+2. Make sure Docker Desktop is running.
+3. Run the setup script:
 
-```bash
-node --version
-npm --version
-git --version
-psql --version
-```
+   ```powershell
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+   .\scripts\setup.ps1
+   ```
 
-Check that pgvector is available in PostgreSQL by connecting to your database and running:
+   The script installs the locked dependencies, creates `.env.local` if needed, generates local JWT/cron secrets, starts PostgreSQL with pgvector, and then asks before resetting the database. **The reset drops and recreates the `public` schema in the database named by `ADMIN_DATABASE_URL`; only continue if this is your local demo database.**
 
-```sql
-SELECT * FROM pg_available_extensions WHERE name = 'vector';
-```
+4. When setup finishes, start the app:
 
-If no row is returned, install pgvector for your PostgreSQL installation before continuing.
+   ```powershell
+   npm run dev
+   ```
 
-### 1. Clone the repository
+5. Open **http://localhost:3000**.
 
-```bash
-git clone https://github.com/PES1UG24AM378/SMARTDESK.git
-cd SMARTDESK
-```
+For a no-model-download/offline demo, run ` .\scripts\setup.ps1 -OfflineEmbedding ` instead. This selects the deterministic `hash` lexical fallback, which is useful for a reliable demo but is **not** the MiniLM semantic model.
 
-### 2. Install dependencies
+### Manual setup (Windows, macOS, or Linux)
 
-```bash
-npm install
-```
-
-### 3. Configure environment variables
-
-Create a local environment file by copying the example.
-
-**Windows PowerShell:**
+From the folder containing `package.json`:
 
 ```powershell
+# Windows PowerShell
 Copy-Item .env.example .env.local
+notepad .env.local
 ```
 
-**macOS / Linux:**
+On macOS/Linux, use `cp .env.example .env.local` and edit the file with your preferred editor. In `.env.local`, set a random `JWT_SECRET` of at least 32 characters. Keep the default local database URLs only when using the included Compose configuration; change them for a different PostgreSQL installation. Do not commit `.env.local` or real employee data.
 
-```bash
-cp .env.example .env.local
+Start PostgreSQL with pgvector:
+
+```powershell
+docker compose up -d postgres
 ```
 
-Open `.env.local` and replace the sample values:
+Install dependencies and initialize the local database (the reset is destructive to the configured `public` schema):
 
-```env
-DATABASE_URL=postgresql://YOUR_DB_USER:YOUR_DB_PASSWORD@localhost:5432/smartdesk
-JWT_SECRET=replace-with-a-long-random-secret
-```
-
-Update the database username, password, host, and database name to match your local PostgreSQL setup.
-
-- `DATABASE_URL`: PostgreSQL connection string.
-- `JWT_SECRET`: Secret for signing/verifying tokens if the authentication implementation uses JWT.
-
-**Security rules**
-
-- Never commit `.env.local`.
-- Never paste real credentials or API keys into public issues or README files.
-- Keep `.env.example` limited to placeholder values.
-- If an optional Gemini integration is enabled in your code, add its required key to `.env.local` using the exact variable name expected by that implementation. Do not assume a variable name without checking the source.
-
-## 🗄️ Database Setup
-
-Create a database for the project. For example, from `psql`:
-
-```sql
-CREATE DATABASE smartdesk;
-```
-
-Connect to it:
-
-```bash
-psql -U YOUR_DB_USER -d smartdesk
-```
-
-Enable pgvector:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-```
-
-### Initialize the project schema
-
-The repository's initial setup instructions specify this order:
-
-1. `db/schema.sql` — create database objects.
-2. `db/seed.sql` — insert sample data.
-3. `node scripts/embed.js` — generate embeddings for the seed records.
-
-Run the SQL scripts from the project root:
-
-```bash
-psql -U YOUR_DB_USER -d smartdesk -f db/schema.sql
-psql -U YOUR_DB_USER -d smartdesk -f db/seed.sql
-```
-
-Then generate embeddings:
-
-```bash
+```powershell
+npm ci
+npm run db:reset
 npm run embed
-```
-
-The `embed` npm script maps to `node scripts/embed.js`.
-
-> **Check before running:** The repository's root listing currently shows `db/` and `lib/`, but the public listing does not expose the contents of `db/` or a `scripts/` directory. Confirm that `db/schema.sql`, `db/seed.sql`, and `scripts/embed.js` exist in your checkout. If any are missing, the setup is incomplete and those files must be added or the instructions updated to match the actual implementation.
-
-### Verify the database
-
-After initialization, connect to PostgreSQL:
-
-```bash
-psql -U YOUR_DB_USER -d smartdesk
-```
-
-List tables:
-
-```sql
-\dt
-```
-
-Check that the vector extension is enabled:
-
-```sql
-SELECT extname FROM pg_extension WHERE extname = 'vector';
-```
-
-The exact tables and verification queries depend on the schema files supplied by the project.
-
-## ▶️ Run the Application
-
-Start the development server:
-
-```bash
 npm run dev
 ```
 
-Open:
+Open **http://localhost:3000**. `npm run embed` downloads the MiniLM model on its first run when `EMBEDDING_PROVIDER=minilm`; this requires internet access. For an offline lexical fallback, set `EMBEDDING_PROVIDER=hash` in `.env.local` **before** running both `npm run db:reset` and `npm run embed`, so stored vectors and the running app use the same provider.
 
-**http://localhost:3000**
+For a production-style local run:
 
-For a production build:
-
-```bash
+```powershell
 npm run build
-npm run start
+npm start
 ```
 
-Stop the development server with `Ctrl + C`.
+The database container can be stopped with `docker compose down`. To also delete its persisted database volume (this permanently deletes the local demo database), run `docker compose down -v`.
 
-### Available npm scripts
+### Demo accounts
 
-| Command | Purpose |
+Password for all seeded demo accounts: `Password@123` (demo only; change or remove these accounts before any real deployment).
+
+| Role | Email |
 |---|---|
-| `npm install` | Install dependencies |
-| `npm run dev` | Start the local development server |
-| `npm run build` | Create a production build |
-| `npm run start` | Run the production build |
-| `npm run embed` | Run the embedding script (`node scripts/embed.js`) |
+| Employee | `aarav.sharma@smartdesk.example` (also `priya.nair`, `rohan.mehta`, and others) |
+| Technician (IT Network) | `suresh.kumar@smartdesk.example` (other technicians include `imran.khan`, `lakshmi.devi`) |
+| Admin | `admin1@smartdesk.example` |
 
-## 🗂️ Repository Structure
+With `NEXT_PUBLIC_DEMO_HINTS=true`, the login page shows one-click buttons for these accounts. `npm run db:reset` re-bases demo timestamps to the current time, so run it before a demo if you want fresh-looking dashboards.
 
-### Structure visible in the public repository
+## 7. Configuration
 
-The public repository currently exposes the following top-level files and directories:
+All configuration is through environment variables (`.env.local`); nothing sensitive is in the source code.
 
-```text
-SMARTDESK/
-├── db/                 # Database scripts (inspect directory for exact files)
-├── lib/                # Shared application logic (inspect directory for exact files)
-├── .env.example        # Environment variable template
-├── .gitignore          # Git exclusions
-├── package.json        # Dependencies and npm scripts
-├── package-lock.json   # Locked dependency versions
-└── README.md           # Project documentation
-```
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Connection used by the web app. Use the restricted role `smartdesk_app` created by `db/roles.sql` |
+| `ADMIN_DATABASE_URL` | Owner/superuser connection used only by scripts (needed to create the `vector` extension) |
+| `APP_DB_PASSWORD` | Password given to the restricted role when `db:reset` runs |
+| `JWT_SECRET` | 32+ random characters; the server refuses to sign tokens without it |
+| `CRON_SECRET` | Lets a scheduler call `POST /api/admin/sla-scan` with header `x-cron-secret` |
+| `EMBEDDING_PROVIDER` | `minilm` (default, real model) or `hash` (offline lexical fallback for tests) |
+| `SIM_HIGH`, `SIM_MID`, `VOTE_SHARE`, `SIM_CLUSTER` | Decision thresholds. Defaults suit MiniLM but are **starting values**: tune with `npm run eval` |
+| `LLM_ENABLED`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_TIMEOUT_MS`, `EXPLAIN_PER_HOUR`, `GEMINI_MOCK` | Gemini explanation step (section 9) |
+| `NEXT_PUBLIC_DEMO_HINTS` | Show demo-account buttons on the login page |
 
-### Intended logical organization
+The **same embedding provider must be used** by `npm run embed` and the running server.
 
-The following is a recommended way to organize the code as the project grows. It is a logical guide, **not a claim that every path already exists in the current repository**.
+## 8. Using the app
 
-```text
-SMARTDESK/
-├── app/
-│   ├── (auth)/                 # Login and authentication pages
-│   ├── employee/               # Employee ticket experience
-│   ├── technician/             # Technician workspace
-│   ├── admin/                  # Admin dashboard
-│   └── api/                    # Next.js route handlers
-├── components/
-│   ├── layout/                 # Shared navigation and layout
-│   ├── tickets/                # Ticket-related UI
-│   └── dashboard/              # Dashboard widgets
-├── lib/
-│   ├── db.js                   # Database connection utilities
-│   ├── embeddings.js           # Text embedding generation
-│   ├── similarity.js           # Similar-ticket retrieval
-│   ├── decide.js               # Routing/assignment decision logic
-│   └── explain.js              # Resolution explanation integration
-├── db/
-│   ├── schema.sql              # Tables, constraints, indexes
-│   ├── seed.sql                # Development/demo records
-│   ├── triggers.sql            # Database triggers, if separated
-│   ├── procedures.sql          # Stored procedures, if separated
-│   └── views.sql               # Reporting views, if separated
-├── scripts/
-│   └── embed.js                # Generate embeddings for existing records
-├── tests/                      # Automated tests
-├── docs/                       # Architecture, ERD, API and setup docs
-├── .env.example                # Safe configuration template
-├── .gitignore
-├── package.json
-└── README.md
-```
+1. **Employee:** sign in, open *New ticket*, type "VPN keeps disconnecting while I work from home". SmartDesk shows the suggested fix, the AI explanation, who is assigned and the deadline. Press *This solved it* to close it yourself, or *Still need help*. Use *My tickets* to search and filter.
+2. **Technician:** sign in, open *My queue*, open a ticket, press *Start work*, then write the resolution and *Resolve ticket*. The fix is now suggested to the next similar ticket.
+3. **Admin:** the *Dashboard* shows counts, deadlines, workload and AI performance. Use *Needs attention* for the triage queue, open a ticket to reassign or escalate it, *Run SLA scan* to raise overdue alerts, and *Users* to create or deactivate accounts.
 
-### Where to look when debugging
+Screenshots are in [`docs/screenshots/`](docs/screenshots/).
 
-- Application startup and dependencies: `package.json`
-- Database connection and shared logic: `lib/`
-- Database schema and sample records: `db/`
-- Environment configuration: `.env.local` (local only) and `.env.example` (committed template)
-- Embedding generation: `scripts/embed.js`, if present
+## 9. Gemini (LLM) setup
 
-## 🔌 API and Application Workflows
+Gemini is used for **one job**: writing a short explanation from the retrieved past fixes. It never decides routing, assignment or access, and the system works without it.
 
-The repository is a Next.js project, so server endpoints—when implemented—are typically defined as route handlers under `app/api/`.
+1. Create an API key in Google AI Studio.
+2. In `.env.local` set `LLM_ENABLED=true`, `GEMINI_API_KEY=...` and `GEMINI_MODEL=...`. **Copy the current model name from Google's Gemini API model list**: names change often, so it is deliberately not hard-coded.
+3. Restart the server. The first suggest-mode ticket will show "AI explanation · <model name>".
 
-Document each endpoint in this format when the routes are finalized:
+Safeguards: emails and phone numbers are removed before sending; ticket text is treated as data; the answer is accepted only if it cites ticket numbers that were supplied (otherwise the raw fix is shown); one call per ticket (cached); a per-user hourly limit; 10-second timeout with one retry; `LLM_ENABLED=false` turns it off. Free-tier content may be used by the provider to improve its products, so use only synthetic or non-confidential tickets in demos.
 
-| Method | Endpoint | Purpose | Status |
+`GEMINI_MOCK=true` produces a built-in, clearly labelled explanation without calling the API (used by automated tests and offline demos).
+
+## 10. Database design
+
+Tables (see the [ER diagram](docs/ER_diagram.png) and the generated [data dictionary](docs/data_dictionary.md)): `departments`, `users`, `technicians`, `sla_policies`, `tickets`, `ticket_status_log`, `sla_alerts`, `ticket_deletions`, `ticket_suggestions`.
+
+**Validation and integrity at the database level** (`db/schema.sql`): primary and foreign keys; description length 10 to 2000; status and role lists; email format and uniqueness; `Resolved` requires a resolution text and a resolved time; resolved time not before created time; `resolution_verified` only when resolved; and a **composite foreign key** so a ticket can only be assigned to a technician of the ticket's own department.
+
+**Advanced database concepts demonstrated**
+
+| Concept | Where |
+|---|---|
+| Transactions | Ticket submission is one transaction with a savepoint around assignment (`lib/ticketService.js`) |
+| Triggers | Status audit with actor, SLA deadline on insert, SLA breach alerts, deletion log (`db/triggers.sql`) |
+| Stored procedures | `assign_technician` (advisory lock), `escalate_ticket`, `scan_and_alert_sla_breaches` (`db/routines.sql`) |
+| Views | `technician_workload`, `resolution_summary`, `recurring_issues` (GROUP BY + HAVING), `suggestion_performance` (`db/views.sql`) |
+| Indexing | B-tree (status, priority, created_at, composite), GIN full-text, partial HNSW vector index (`db/indexes.sql`) |
+| Full-text search | Generated `tsvector` column; used for ticket search and as the evaluation baseline |
+| Vector similarity search | `tickets.embedding vector(384)`, cosine distance `<=>` |
+
+DDL (`CREATE`, `DROP SCHEMA ... CASCADE` in `reset-db.js`, constraints, indexes, views) and DML (`INSERT`, `UPDATE`, `DELETE` through ticket withdrawal, `SELECT` with JOIN, GROUP BY, HAVING, subqueries and a window function) are demonstrated. The important queries, all verified to run, are in [`docs/queries.sql`](docs/queries.sql).
+
+**Vector data model:** the ticket description is embedded with MiniLM (384 numbers, local); stored in `tickets.embedding`; indexed with a partial HNSW index over verified resolved tickets; compared with cosine similarity; the 5 nearest are retrieved and passed to `decide()`.
+
+## 11. API reference
+
+All routes need a signed-in session (cookie) except login. State-changing requests also pass an Origin check.
+
+| Method | Path | Roles | Purpose |
 |---|---|---|---|
-| `POST` | `/api/tickets` | Create a ticket | Verify in source |
-| `GET` | `/api/tickets` | List or filter tickets | Verify in source |
-| `GET` | `/api/tickets/:id` | Retrieve ticket details | Verify in source |
-| `PATCH` | `/api/tickets/:id` | Update ticket fields/status | Verify in source |
-| `GET` | `/api/tickets/:id/similar` | Retrieve semantically similar tickets | Verify in source |
+| POST | `/api/auth/login` | public | Sign in (rate limited, same error for any failure) |
+| POST | `/api/auth/logout` | any | Clear the cookie |
+| GET | `/api/me` | any | Current user |
+| GET | `/api/meta` | any | Departments, priorities (and technicians for Admin) |
+| POST | `/api/tickets` | any | Create a ticket: embed, search, decide, save, assign |
+| GET | `/api/tickets/mine` | any | Own tickets; filters `status`, `priority`, `q` (full-text) |
+| GET | `/api/tickets` | Technician, Admin | Department (Technician) or all (Admin); filters `scope`, `status`, `priority`, `dept_id`, `q` |
+| GET | `/api/tickets/:id` | owner, assigned or same-department technician, Admin | Detail, timeline, suggestion, allowed actions |
+| PATCH | `/api/tickets/:id` | assigned Technician, Admin | Start work or resolve |
+| DELETE | `/api/tickets/:id` | owner, Admin | Withdraw a ticket that is still Open |
+| POST | `/api/tickets/:id/feedback` | owner | "This solved it" (closes with the fix) or "Still need help" |
+| POST | `/api/tickets/:id/reopen` | owner, Admin | Reopen and assign again |
+| POST | `/api/tickets/:id/explanation` | owner, Admin | Gemini explanation (cached) |
+| GET | `/api/admin/stats` | Admin | Dashboard data from the views |
+| GET | `/api/admin/alerts` | Admin | SLA alerts (`?active=true`) |
+| POST | `/api/admin/sla-scan` | Admin or `x-cron-secret` | Run the overdue scan |
+| PATCH | `/api/admin/tickets/:id/assign` | Admin | Reassign department/technician, or escalate priority |
+| GET/POST | `/api/admin/users` | Admin | List / create users |
+| PATCH | `/api/admin/users/:id` | Admin | Activate / deactivate |
 
-> These are endpoint design examples, not verified live routes. Replace this table with the actual route handlers and request/response examples before claiming API support.
+Scheduling the SLA scan: triggers cannot detect time passing, so overdue tickets are found by `scan_and_alert_sla_breaches()`. Either call `POST /api/admin/sla-scan` from a scheduler with the `x-cron-secret` header, or use `pg_cron` if available: `SELECT cron.schedule('sla-scan', '*/10 * * * *', 'CALL scan_and_alert_sla_breaches(NULL)');`
 
-## 🧪 Testing and Quality Checks
+## 12. Testing and results
 
-Before submitting changes, run the checks supported by the project:
+| Command | What it checks |
+|---|---|
+| `npm test` | Unit tests: decision logic, Gemini helper (grounding check, scrubbing, mock), fallback embedding |
+| `npm run test:db` | Database tests inside a rolled-back transaction: constraints, composite foreign key, triggers, procedures, views, full-text, HNSW index usable |
+| `npm run test:api` | End-to-end API checks against a **running** server: login and rate limit, role matrix, IDOR, full ticket lifecycle, AI flow, admin actions, CSRF, cookies |
+| `npm run test:concurrency` | Proves the assignment lock: 40 parallel tickets, with and without the lock |
+| `npm run eval` | Routing quality on a hand-written test set against a keyword baseline; writes `docs/evaluation_results.md` |
+| `npm run perf` | `EXPLAIN ANALYZE` before/after indexes on generated data; writes `docs/performance_results.md` |
 
-```bash
-npm run build
-```
+To run the automated tests offline and deterministically, use the settings in `.env.test.example` (fallback embeddings and the mock explanation), then `npm run db:reset && npm run embed && npm run build && npm start`, and in another terminal `npm run test:api`.
 
-If automated tests are added, document and run the test command here. The current `package.json` does not declare a test script, so do not assume `npm test` is available.
+**Results of the last run** (PostgreSQL 16 with pgvector 0.6.0, Next.js production build, offline settings above):
 
-Suggested quality checks for the project:
+| Suite | Result |
+|---|---|
+| Unit tests | 15 / 15 passed |
+| Database tests | 25 / 25 passed |
+| API checks | 62 / 62 passed |
+| Concurrency | 40 parallel assignments: balanced (about 21/21) with the lock; **all but one go to the same technician** without it (e.g. 41/2) |
+| B-tree indexes (200,000 generated rows) | 40 to 51 ms down to 0.07 ms for the main dashboard filters |
+| HNSW (20,000 generated vectors) | 17 ms exact down to 2.6 ms; recall@5 65% (approximate by design) |
 
-- Validate required fields before creating tickets.
-- Use parameterized SQL queries.
-- Enforce authorization on server-side routes.
-- Validate ticket status transitions.
-- Test similarity search with paraphrased descriptions.
-- Verify that only appropriate historical resolutions are suggested.
-- Test SLA calculations around deadline boundaries.
-- Keep secrets out of source control.
+**Important honesty notes**
 
-## 🔐 Security and Configuration Notes
+- The sandbox used for these runs had no internet, so the real MiniLM model and the real Gemini API were **not exercised end to end**. Tests ran with the offline fallback embedding (`hash`, lexical, not semantic) and the labelled mock explanation. The code paths for MiniLM and Gemini are in place (the Gemini call matches the installed `@google/genai` SDK types, and a failing model correctly sends tickets to triage), but run `npm run embed`, `npm run eval` and a few real tickets on your machine to confirm and to obtain the real accuracy figures.
+- The evaluation in `docs/evaluation_results.md` was produced with the fallback embedding. On the held-out half of the hand-written set it routed correctly more often than the keyword baseline (decision accuracy 85.7% vs 78.6%), but treat these as fallback-only numbers, not MiniLM numbers.
+- The seed data is synthetic and templated (only 24 distinct resolution texts across 100 resolved tickets), which is why evaluation uses a separate hand-written set.
 
-- Keep database credentials and JWT secrets in local environment variables.
-- Do not expose database connection strings to browser-side code.
-- Perform role and permission checks on the server, not only in the UI.
-- Use parameterized database queries to reduce SQL injection risk.
-- Validate and normalize incoming ticket data.
-- Treat retrieved historical fixes as suggestions that require review.
-- Avoid logging passwords, tokens, or sensitive employee information.
+## 13. Security
 
-## 🛠️ Troubleshooting
+Passwords hashed with bcrypt, never stored in plain text. Signed httpOnly, SameSite cookie (8 hours); the user row is re-read on every request so deactivation takes effect immediately. Role and ownership checks on the server for every route; a ticket you may not see returns 404. A rate limit on login with identical error messages for every failure (no user enumeration). Parameterized SQL only. Origin check against cross-site requests. Input validated by `zod` and, as the final guard, by database constraints. Secrets only in environment variables; `.env.local` is in `.gitignore`. The app connects as a restricted database role. LLM safeguards are listed in section 9.
 
-| Problem | Likely cause | What to check |
+Before any real deployment: remove the demo accounts, set `NEXT_PUBLIC_DEMO_HINTS=false`, use HTTPS (cookies become `Secure` automatically in production), use a proper TLS certificate setup for hosted databases (`lib/db.js` currently disables certificate verification for non-local hosts), and note that the login rate limiter is in memory (one server instance).
+
+## 14. Team and contributions
+
+Work is split by feature so each member works on both the database and the web application.
+
+| | Member 1: Ticket lifecycle and access | Member 2: Intelligence and analytics |
 |---|---|---|
-| `npm` is not recognized | Node.js/npm is not installed or PATH is not refreshed | Install Node.js, reopen the terminal, run `node --version` |
-| `npm install` fails | Network, Node version, or dependency issue | Check Node version and the full npm error |
-| Database connection refused | PostgreSQL is stopped or host/port is wrong | Start PostgreSQL and verify `DATABASE_URL` |
-| Password authentication failed | Incorrect database credentials | Update `.env.local` and retry |
-| `extension "vector" is not available` | pgvector is not installed for this PostgreSQL instance | Install a compatible pgvector package |
-| `db/schema.sql` not found | SQL file is missing or path differs | Inspect the `db/` directory and correct the command |
-| `scripts/embed.js` not found | Embedding script is missing or path differs | Inspect the repository and update the script or npm command |
-| Port 3000 is in use | Another process is using the port | Stop that process or use the port suggested by Next.js |
-| Build fails | Missing environment variable or source error | Read the first meaningful error in the terminal |
+| Database | users and roles, constraints, audit and SLA triggers, `assign_technician` with lock, `escalate_ticket`, deletion log | pgvector column and HNSW index, similarity query, full-text search, workload, resolution, recurring-issue and performance views |
+| Application | login and sessions, role checks, My Tickets, ticket detail, technician queue, admin users, SLA alerts and scan | ticket submission and suggestion card, decision logic, embeddings, Gemini explanation, admin dashboard, evaluation |
 
-## 🚀 Future Improvements
+_Add each member's name, roll number and the commits or pull requests that show their contribution here._
 
-Potential next steps, depending on project scope:
+## 15. Troubleshooting
 
-- Complete employee, technician, and admin role-based experiences.
-- Add ticket filters, pagination, and audit history.
-- Improve semantic ranking with category and status-aware filtering.
-- Add feedback on whether suggested resolutions were useful.
-- Add SLA escalation notifications.
-- Add automated tests for database routines and API routes.
-- Add CI checks for linting, tests, and production builds.
-- Add deployment documentation and operational monitoring.
+| Problem | Fix |
+|---|---|
+| `extension "vector" is not available` | Use a PostgreSQL with pgvector (the Docker image above), and run `db:reset` with a superuser in `ADMIN_DATABASE_URL` |
+| `JWT_SECRET must be set` | Set a 32+ character `JWT_SECRET` in `.env.local` and restart |
+| Every ticket goes to triage | The embedding step failed (see the server log: `AI step failed`). First run needs internet to download MiniLM, or set `EMBEDDING_PROVIDER=hash` for an offline demo. Also check that `npm run embed` was run with the same provider |
+| Suggestions look wrong or never appear | Tune `SIM_HIGH` / `SIM_MID` with `npm run eval` |
+| No AI explanation | Check `LLM_ENABLED`, `GEMINI_API_KEY`, `GEMINI_MODEL` (current model name from Google's docs); the raw fix is still shown |
+| `node: bad option: --env-file` | Upgrade to Node 20.6 or newer |
+| `docker` or `docker compose` is not recognized | Install/start Docker Desktop, reopen PowerShell, and retry; alternatively install PostgreSQL with pgvector locally and update both database URLs in `.env.local`. |
+| `DATABASE_URL is not set` or `JWT_SECRET must be set` | Confirm `.env.local` exists in the project root (beside `package.json`) and contains the required values; restart the dev server after edits. |
+| `npm ci` fails | Check your internet connection and Node/npm versions, then retry `npm ci`; use `npm ci` rather than mixing it with a different package manager. |
+| MiniLM download fails or times out | Set `EMBEDDING_PROVIDER=hash` in `.env.local`, then rerun `npm run db:reset` and `npm run embed` so the database vectors match the selected provider. |
+| Dashboard shows everything overdue | Run `npm run db:reset` to re-base the demo dates |
 
-## 🤝 Contributing
+## 16. Limitations and future work
 
-1. Fork the repository.
-2. Create a focused branch:
+- The seed corpus is small and synthetic; real deployments need real verified resolutions.
+- Suggestions are shown as suggestions with their source; a technician should still verify them. The feedback loop (solved / not solved / reopen) improves what is suggested over time but is not a trained model.
+- The login rate limiter is in memory; use a shared store for several server instances.
+- Possible extensions: in-app notifications, an LLM weekly summary of recurring issues, row-level security, priority suggestion from similar tickets, multilingual embeddings.
 
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+## 17. Course requirements checklist
 
-3. Make and test your changes.
-4. Commit with a clear message:
-
-   ```bash
-   git add .
-   git commit -m "feat: describe your change"
-   ```
-
-5. Push your branch and open a Pull Request describing the change and how it was tested.
-
-## 📚 Learning Outcomes
-
-This project can demonstrate practical application of:
-
-- Relational database design and normalization.
-- Primary keys, foreign keys, constraints, and indexes.
-- SQL queries and transaction handling.
-- Stored procedures, triggers, and views (where implemented).
-- PostgreSQL extension usage.
-- Vector embeddings and semantic similarity retrieval.
-- Full-stack application development with Next.js and React.
-- Secure configuration and collaborative development using Git.
-
-## 📄 License
-
-No license is currently specified in the repository. Unless a license is added, do not assume that the source code is open for reuse, redistribution, or modification by others.
-
----
-
-<div align="center">
-
-**SmartDesk — Turning recurring workplace issues into searchable support knowledge.**
-
-Built as a DBMS Experiential Learning Project.
-
-</div>
+| Requirement | Where it is met |
+|---|---|
+| Unique, not simple CRUD | Semantic search, automatic routing, SLA engine, RAG explanation, measured evaluation |
+| 2 members, each on database and application | Section 14 |
+| SQL + vector database | PostgreSQL + pgvector (section 10) |
+| ER diagram, relational schema, data dictionary | `docs/ER_diagram.png`, `db/schema.sql`, `docs/data_dictionary.md` |
+| DDL and DML, JOIN, GROUP BY, HAVING, subqueries | `db/*.sql`, `docs/queries.sql` |
+| At least four advanced concepts | Transactions, triggers, procedures, views, indexing, full-text search, vector search |
+| Embeddings explained | Section 10 and `docs/architecture.md` |
+| Next.js interface with forms, tables, search, filters, dashboards | `app/` |
+| API layer, no hard-coded credentials | Route handlers; environment variables |
+| Authentication and roles (minimum 2) | Employee, Technician, Admin |
+| Validation and integrity in the database | Section 10 |
+| Security basics, no plain-text passwords | Section 13 |
+| Documentation, Git/GitHub, README, demo | This file, `docs/`, the project report and slides |
